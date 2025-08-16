@@ -1,4 +1,4 @@
-
+version: "3.9"
 
 services:
   fastapi-app:
@@ -17,67 +17,39 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
-    # <<< REMOVED >>> The loki logging driver is no longer needed
-    # logging:
-    #   driver: loki
-    #   options:
-    #     loki-url: "http://loki:3100/loki/api/v1/push"
-    #     loki-batch-size: "400"
+
   jenkins:
     image: jenkins/jenkins:lts-jdk17
     container_name: jenkins
+    user: root
     ports:
-      # Port for the Jenkins Web UI
-      - "8081:8080" 
-      # Port for Jenkins agents to connect
+      - "8081:8080"
       - "50000:50000"
     networks:
       - monitoring
     restart: unless-stopped
     volumes:
-      # This is critical! It persists all your Jenkins data (jobs, plugins, config).
       - jenkins_data:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      # SECURITY: Change this password in a real environment!
-      # This creates an initial admin user for you to avoid the setup wizard.
       - JENKINS_ADMIN_ID=admin
       - JENKINS_ADMIN_PASSWORD=password
-      # Optional: Sets the timezone for the Jenkins instance
       - JAVA_OPTS=-Duser.timezone=UTC
     healthcheck:
-      # Waits for the login page to be accessible before marking as healthy
       test: ["CMD-SHELL", "curl -f http://localhost:8080/login || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
-      # Jenkins can be slow to start, so give it a generous start period.
-      start_period: 60s 
-
-  # <<< NEW >>> Add the Promtail service
-  promtail:
-    image: grafana/promtail:2.9.2
-    container_name: promtail
-    user: "0:0"
-    volumes:
-      - ./promtail:/etc/promtail_config
-      - log_data:/var/log
-    # <<< CORRECTED >>> THIS COMMAND NOW LOOKS FOR YOUR 'config.yaml' FILE
-    command: -config.file=/etc/promtail_config/config.yaml 
-    networks:
-      - monitoring
-    restart: unless-stopped
-    depends_on:
-      - loki
+      start_period: 60s
 
   loki:
     image: grafana/loki:2.9.2
     container_name: loki
     ports:
       - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
     volumes:
-      - ./loki:/etc/loki_config
-      - loki_data:/data/loki
-    command: -config.file=/etc/loki_config/config.yaml
+      - loki_data:/data
     networks:
       - monitoring
     restart: unless-stopped
@@ -87,15 +59,28 @@ services:
       timeout: 5s
       retries: 5
 
+  promtail:
+    image: grafana/promtail:2.9.2
+    container_name: promtail
+    volumes:
+    - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    - ./promtail-config.yaml:/etc/promtail/config.yaml
+    command: -config.file=/etc/promtail/config.yaml
+    networks:
+      - monitoring
+    restart: unless-stopped
+    depends_on:
+      - loki
+
   prometheus:
     image: prom/prometheus:v2.47.2
     container_name: prometheus
     ports:
       - "9090:9090"
     volumes:
-      - ./prometheus:/etc/prometheus_config
+      - ./prometheus:/etc/prometheus
       - prometheus_data:/prometheus
-    command: --config.file=/etc/prometheus_config/prometheus.yaml
+    command: --config.file=/etc/prometheus/prometheus.yaml
     networks:
       - monitoring
     restart: unless-stopped
@@ -110,6 +95,9 @@ services:
     container_name: grafana
     ports:
       - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning
       - grafana_data:/var/lib/grafana
@@ -130,7 +118,6 @@ networks:
     driver: bridge
 
 volumes:
-  # <<< MODIFIED >>> Add the new volume for logs
   log_data:
   loki_data:
   prometheus_data:
