@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: fastapi-app-service
+  namespace: dev
+  labels:
+    app: fastapi-app
+spec:
+  selector:
+    app: fastapi-app
+  ports:
+    - name: http # Naming the port is a good practice
+      protocol: TCP
+      # Expose the service on the standard HTTP port
+      port: 80
+      # Forward traffic to the container's port
+      targetPort: 8000
+  type: NodePort

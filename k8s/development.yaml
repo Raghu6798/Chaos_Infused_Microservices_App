@@ -1,0 +1,110 @@
+# --- Promtail Configuration ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: promtail-config
+  namespace: dev # It's good practice to specify the namespace for all resources
+data:
+  config.yaml: |
+    server:
+      http_listen_port: 9080
+      grpc_listen_port: 0
+
+    positions:
+      filename: /tmp/positions.yaml
+
+    clients:
+      # This assumes your Loki service is named 'loki' and runs in the 'monitoring' namespace.
+     - url: http://host.minikube.internal:3100/loki/api/v1/push
+
+    scrape_configs:
+    - job_name: fastapi-app
+      static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: fastapi-app
+          __path__: /var/log/*.log
+
+---
+# --- FastAPI Application Deployment ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fastapi-app-deployment
+  namespace: dev
+  labels:
+    app: fastapi-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: fastapi-app
+  template:
+    metadata:
+      labels:
+        app: fastapi-app
+      annotations:
+        prometheus.io/scrape: 'true'
+        prometheus.io/path:   '/metrics'
+        prometheus.io/port:   '8000'
+    spec:
+      volumes:
+      - name: log-volume
+        emptyDir: {}
+      - name: promtail-config-volume
+        configMap:
+          name: promtail-config
+      
+      containers:
+      # --- Main Application Container ---
+      - name: fastapi-app
+        # IMPORTANT: Replace with your actual image path
+        image: fastapi-chaos-app:latest
+        # For the ':latest' tag, 'Always' ensures the newest image is used.
+        imagePullPolicy:  IfNotPresent
+        ports:
+        - containerPort: 8000
+          name: http
+        
+        # --- Health Checks ---
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 20
+          periodSeconds: 15
+          failureThreshold: 3
+
+        # --- Resource Management ---
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+
+        volumeMounts:
+        - name: log-volume
+          mountPath: /var/log
+
+      # --- Log Collection Sidecar Container ---
+      - name: promtail-sidecar
+        image: grafana/promtail:2.9.2
+        args:
+        - "-config.file=/etc/promtail/config.yaml"
+        
+        volumeMounts:
+        - name: log-volume
+          mountPath: /var/log
+          readOnly: true
+        - name: promtail-config-volume
+          mountPath: /etc/promtail
+          readOnly: true

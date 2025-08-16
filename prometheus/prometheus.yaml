@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 15s # Scrape targets every 15 seconds
+
+scrape_configs:
+  - job_name: 'prometheus'
+    # Scrape Prometheus itself
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'fastapi-app'
+    # Scrape our FastAPI application
+    static_configs:
+      # - targets: ['fastapi-app:8000']
+         - targets: [192.168.49.2:31956']  # 'fastapi-app' is the service name in docker-compose
+

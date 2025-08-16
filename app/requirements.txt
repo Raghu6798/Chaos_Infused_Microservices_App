@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+loguru
+psutil
+sqlalchemy
+pydantic
+prometheus-client
+prometheus-fastapi-instrumentator
