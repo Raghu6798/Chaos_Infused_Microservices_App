@@ -1,36 +1,39 @@
+// Jenkinsfile for Raghu's Chaos_Infused_Microservices_App
+
 pipeline {
-    agent any // We will run directly on the Jenkins controller node
+    // Run on the main Jenkins node. This is fine for this setup.
+    agent any
 
     environment {
         // --- CONFIGURATION ---
-        // Change these to match your setup
+        // Your Docker Hub username is set here.
         DOCKERHUB_USERNAME = 'raghumaverick'
-        IMAGE_NAME = "${DOCKERHUB_USERNAME}/fastapi-chaos-app"
+        // The image will be named raghumaverick/chaos-infused-app
+        IMAGE_NAME = "${DOCKERHUB_USERNAME}/chaos-infused-app"
+        // The Kubernetes namespace for deployment.
         K8S_NAMESPACE = 'dev'
     }
 
     stages {
-        stage('Prepare Workspace') {
+        stage('Checkout from Git') {
             steps {
-                echo 'Cleaning up old workspace...'
-                // Clean the workspace to ensure we're not using old files
-                cleanWs()
-                
-                echo 'Copying application files into workspace...'
-                // This assumes your project is located at C:\Users\Raghu\Downloads\Incidence_response_agent
-                // !!! IMPORTANT: CHANGE THIS PATH TO MATCH YOUR PROJECT LOCATION !!!
-                dir('C:Users/Raghu/Downloads/Incidence_response_agent/Grafana_Loki_test') {
-                    // We copy the necessary files into the Jenkins job's workspace
-                    sh 'cp -r app k8s Dockerfile .'
-                }
+                echo 'Checking out code from Git repository...'
+                // This step pulls the code from the job's Git configuration.
+                checkout scm
             }
         }
-        
+
         stage('Build Docker Image') {
             steps {
                 echo "Building Docker image: ${IMAGE_NAME}:${env.BUILD_NUMBER}"
-                // Use the build number as a unique tag
-                sh "docker build -t ${IMAGE_NAME}:${env.BUILD_NUMBER} ."
+                
+                // --- CUSTOMIZED BUILD COMMAND ---
+                // This command correctly points to your Dockerfile inside the 'app' directory
+                // -f app/Dockerfile : Specifies the path to the Dockerfile.
+                // .                 : Sets the build context to the project root.
+                sh "docker build -f app/Dockerfile -t ${IMAGE_NAME}:${env.BUILD_NUMBER} ."
+                
+                // Tag the new build as 'latest' for convenience
                 sh "docker tag ${IMAGE_NAME}:${env.BUILD_NUMBER} ${IMAGE_NAME}:latest"
             }
         }
@@ -38,10 +41,12 @@ pipeline {
         stage('Push to Docker Hub') {
             steps {
                 echo "Logging in and pushing image to Docker Hub..."
-                // Use the credential ID you configured in Jenkins
+                // Use the credential ID 'DOCKERHUB_CREDENTIALS' you configured in Jenkins
                 withCredentials([usernamePassword(credentialsId: 'DOCKERHUB_CREDENTIALS', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh "echo ${DOCKER_PASS} | docker login -u ${DOCKER_USER} --password-stdin"
+                    // Push the uniquely tagged version
                     sh "docker push ${IMAGE_NAME}:${env.BUILD_NUMBER}"
+                    // Push the 'latest' tag
                     sh "docker push ${IMAGE_NAME}:latest"
                 }
             }
@@ -50,16 +55,17 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 echo 'Deploying to Minikube cluster...'
-                // Use the kubeconfig credential ID you configured in Jenkins
+                // Use the kubeconfig credential ID 'MINIKUBE_KUBECONFIG' you configured in Jenkins
                 withCredentials([file(credentialsId: 'MINIKUBE_KUBECONFIG', variable: 'KUBECONFIG_FILE')]) {
                     sh """
                         export KUBECONFIG=\$KUBECONFIG_FILE
                         
                         echo 'Updating image in Kubernetes deployment...'
-                        # This command updates the deployment to use the new image version
+                        # This performs a safe, zero-downtime rolling update of your application
+                        # It tells the deployment to use the new image we just built and pushed.
                         kubectl set image deployment/fastapi-app-deployment fastapi-app=${IMAGE_NAME}:${env.BUILD_NUMBER} -n ${K8S_NAMESPACE}
 
-                        echo 'Applying service configuration...'
+                        echo 'Applying service configuration to ensure it is up-to-date...'
                         kubectl apply -f k8s/service.yaml -n ${K8S_NAMESPACE}
 
                         echo 'Verifying rollout status...'
@@ -71,8 +77,10 @@ pipeline {
     }
 
     post {
+        // This block runs after all stages, regardless of success or failure.
         always {
             echo 'Pipeline finished. Cleaning up...'
+            // Good practice to log out of Docker.
             sh 'docker logout'
         }
     }
